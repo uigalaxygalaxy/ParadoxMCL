@@ -59,11 +59,15 @@ static std::array<std::array<float,2>,4> SENSOR_OFFSETS = {{{
     {{-2.5f, 0.0f}}  // back sensor: 2.5" rear, 0" right
 }}}; // TODO: measure these precisely
 
+//the top sentence was lke super advanced so here it is in actual english: just find the offsets of the sensors from the center of the chassis cuz we have bum builders that dont do that
+
 // Per-sensor reading bias (inches). This lets you correct sensors that
 // systematically under- or over-report distances. Positive value means the
 // sensor reads a SHORTER distance than reality by this amount (so we subtract
 // the bias from the expected distance when comparing to the reading).
 static std::array<float,4> SENSOR_READING_BIAS = {0.0f, 0.0f, 0.0f, 0.0f};
+
+//just in case lol. vex judges will love it if you say it is systematically under or over shooting btw even though were most likely not using this at all
 
 // Controller button to toggle MCL on/off
 static const pros::controller_digital_e_t TOGGLE_BUTTON = pros::E_CONTROLLER_DIGITAL_R1; // TODO: change if desired
@@ -325,7 +329,7 @@ void autonomous() {
             return {dLeft.get_confidence(), dFront.get_confidence(), dRight.get_confidence(), dBack.get_confidence()};
         };
 
-        auto sensorOffsets = [&]() -> std::array<std::array<float,2>,4> {
+        auto sensorOffsets = [&]() -> std::array<std::array<float,2>,4> { //self exmplanatory these two
             return SENSOR_OFFSETS;
         };
         auto sensorReadingBiases = [&]() -> std::array<float,4> {
@@ -350,26 +354,28 @@ void autonomous() {
             //  - This simple raycast assumes axis-aligned box walls.
             const float WALL_MIN = -70.2f;
             const float WALL_MAX = 70.2f;
-            // Compute ray direction for this sensor (world frame)
-            float ang = lemlib::degToRad(ptheta + sensorAngles[sensorIndex]);
+            // compute ray direction for te sensor 
+            float ang = lemlib::degToRad(ptheta + sensorAngles[sensorIndex]); //raycast our sensor angles here to fix bum sensor offsets
             float rx = cos(ang);
             float ry = sin(ang);
 
-            // Sensor aperture position in robot frame
+            // get sensor offset
             auto so = sensorOffsets()[sensorIndex];
             float sx = so[0];
             float sy = so[1];
 
-            // Rotate sensor offset into world frame using particle heading
+            // rotate sensor offset into world frame using particle heading
             float th = lemlib::degToRad(ptheta);
             float sWx = cos(th) * sx - sin(th) * sy;
             float sWy = sin(th) * sx + cos(th) * sy;
 
-            // Ray origin = particle position + sensor world offset
+            // calculate ray origin
             float ox = px + sWx;
             float oy = py + sWy;
 
             float bestT = 1e6f;
+
+            //particle raycasting stuff
 
             // vertical walls x = WALL_MIN and WALL_MAX
             for (float wx : {WALL_MAX, WALL_MIN}) {
@@ -391,7 +397,7 @@ void autonomous() {
 
             if (bestT > 1e5f) return 9999.0f; // no intersection
             float expected = bestT; // distance from sensor aperture to wall
-            // apply per-sensor systematic reading bias (positive -> sensor reads SHORTER)
+            // sensor bias? subtract 
             expected -= sensorReadingBiases()[sensorIndex];
             if (expected < 0.0f) expected = 0.0f;
             return expected;
