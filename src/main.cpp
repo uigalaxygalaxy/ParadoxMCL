@@ -307,6 +307,18 @@ void autonomous() {
         default: bum(); break;
     }
 
+    pros::Task telementary([&]() {
+        while (true) {
+            // send pose to telementary
+            float x = lemlib::getPose().x;
+            float y = lemlib::getPose().y;
+            float theta = lemlib::getPose().theta;
+            pros::lcd::print(1, 0, "X: %.2f Y: %.2f T: %.2f", x, y, theta);
+            printf("X: %.2f Y: %.2f T: %.2f\n", x, y, theta);
+            pros::delay(50);
+        }
+    });
+
     // big mcl hope it works :pray:
     pros::Task MCL([&]() {
         std::default_random_engine generator(std::random_device{}()); // RNG for noise
@@ -365,33 +377,33 @@ void autonomous() {
             float sy = so[1];
 
             // rotate sensor offset into world frame using particle heading
-            float th = lemlib::degToRad(ptheta);
-            float sWx = cos(th) * sx - sin(th) * sy;
+            float th = lemlib::degToRad(ptheta); //particle theta in rads
+            float sWx = cos(th) * sx - sin(th) * sy; //math with it to find offset coordinates
             float sWy = sin(th) * sx + cos(th) * sy;
 
             // calculate ray origin
-            float ox = px + sWx;
+            float ox = px + sWx; //ray starts at the particle position + the offset of the sensor
             float oy = py + sWy;
 
-            float bestT = 1e6f;
+            float bestT = 1e6f; // initialize this to a really big number, we drag it down depending on what the best sensor is.
 
             //particle raycasting stuff
 
             // vertical walls x = WALL_MIN and WALL_MAX
             for (float wx : {WALL_MAX, WALL_MIN}) {
-                if (fabs(rx) < 1e-6f) continue;
-                float t = (wx - ox) / rx;
-                if (t <= 0) continue;
-                float yi = oy + t * ry;
-                if (yi <= WALL_MAX + 1e-3f && yi >= WALL_MIN - 1e-3f) bestT = std::min(bestT, t);
+                if (fabs(rx) < 1e-6f) continue; // if the ray is 0 degrees (aka parallel to the wall), skip
+                float t = (wx - ox) / rx; // find intersection point using trig
+                if (t <= 0) continue; // if the intersection is somehow behind the sensor, skip
+                float yi = oy + t * ry; // find the intersection distance for y this time
+                if (yi <= WALL_MAX + 1e-3f && yi >= WALL_MIN - 1e-3f) bestT = std::min(bestT, t); //if yi is within bounds, we save it as bestT as a possible intersection
             }
 
-            // horizontal walls y = WALL_MIN and WALL_MAX
+            // horizontal walls y = WALL_MIN and WALL_MAX : same thing but for y 
             for (float wy : {WALL_MAX, WALL_MIN}) {
                 if (fabs(ry) < 1e-6f) continue;
                 float t = (wy - oy) / ry;
                 if (t <= 0) continue;
-                float xi = ox + t * rx;
+                float xi = ox + t * rx; // find intersection distance for x
                 if (xi <= WALL_MAX + 1e-3f && xi >= WALL_MIN - 1e-3f) bestT = std::min(bestT, t);
             }
 
@@ -416,6 +428,8 @@ void autonomous() {
                 pros::delay(100);
                 continue;
             }
+
+
             // predict particle positions from odom
                lemlib::Pose localSpeed = lemlib::getLocalSpeed(false); // get local speed from lemlib , good thing i caught that mistake before  my beauty sleep (goon)
             for (Particle &p : particles) { //for each particle...
@@ -423,12 +437,7 @@ void autonomous() {
                 float dy = (localSpeed.y * dt) + dyNoise(generator);
                 float dtheta = (localSpeed.theta * dt) + dthetaNoise(generator);
                 float thetaRad = lemlib::degToRad(p.theta); // c++ is weird and needs radians for trig functions
-
-                /*
-                TODO:
-                change odomspeed to be local instead of global
-                */
-                p.x += dx * cos(thetaRad) - dy * sin(thetaRad); //just realized this changes it to be global. That's not good our odom Speed is global too. Yeah im wayy too lazy to fix that now
+                p.x += dx * cos(thetaRad) - dy * sin(thetaRad); // changes local robot movement to global coordinates than update particle
                 p.y += dx * sin(thetaRad) + dy * cos(thetaRad);
                 p.theta += dtheta; //normalize angle to be within (-180, 180]
                 p.theta = fmod(p.theta + 180.0f, 360.0f);
