@@ -1,5 +1,6 @@
 #include "main.h"
 #include "lemlib/api.hpp" // IWYU pragma: keep
+#include "lemlib-tarball/api.hpp" // IWYU pragma: keep
 
  #include "lemlib/chassis/odom.hpp"
  #include "lemlib/chassis/mcl.hpp"
@@ -8,9 +9,10 @@
  #include <cmath>
 #include <atomic> // like our sister team 45434A. they're cutie patooties
 
+
  std::vector<Particle> particles; //initialize so its global and we dont , like die cuz of thread  magic. ChatGPT said so and is way smarter than me anyway
 
-
+// is this actually building
 // TODO: tune constants so that our math works. ****** everything written below is made by chatgpt, what can you expect from me. i have an essay due in 17 minutes. i should be doing that instead of
 // this. its also 11:43 pm on a tuesday night. this is tough mangoes :c
 
@@ -77,94 +79,124 @@ static std::atomic<bool> mclEnabled{true};
 
  int autonSelected = 0;
 
- //  our starting poses for start of autos. If you don't change these, you're gonna die
-StartingPose leftStart {12.0f, 25.0f, 320.0f};
-StartingPose rightStart {36.0f, 25.0f, 40.0f};
-StartingPose awpStart {24.0f, 15.0f, 0.0f};
-StartingPose skillsStart {12.0f, 10.0f, 0.0f};
-StartingPose bumStart {24.0f, 25.0f, 180.0f};
 
-
-// controller
+// create the controller
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
-// motor groups
-pros::MotorGroup leftMotors({-5, 4, -3},
-                            pros::MotorGearset::blue); // left motor group - ports 3 (reversed), 4, 5 (reversed)
-pros::MotorGroup rightMotors({6, -9, 7}, pros::MotorGearset::blue); // right motor group - ports 6, 7, 9 (reversed)
+//pneumatics
+pros::ADIDigitalOut loader('A');
+pros::ADIDigitalOut centerGoal('B');
+pros::ADIDigitalOut odomLift('C');
 
-// Inertial Sensor on port 10
-pros::Imu imu(10);
+// Initialize the Drivetrain:
 
-// tracking wheels
-// horizontal tracking wheel encoder. Rotation sensor, port 20, not reversed
-pros::Rotation horizontalEnc(20);
-// vertical tracking wheel encoder. Rotation sensor, port 11, reversed
-pros::Rotation verticalEnc(-11);
-// horizontal tracking wheel. 2.75" diameter, 5.75" offset, back of the robot (negative)
-lemlib::TrackingWheel horizontal(&horizontalEnc, lemlib::Omniwheel::NEW_275, -5.75);
-// vertical tracking wheel. 2.75" diameter, 2.5" offset, left of the robot (negative)
-lemlib::TrackingWheel vertical(&verticalEnc, lemlib::Omniwheel::NEW_275, -2.5);
+// Creates a Motor Group with PROS. the number is the port. Negative numbers = reverse
+//front, middle, back
+pros::MotorGroup left_motors({9, -10, -8}, pros::MotorGearset::blue);
+pros::MotorGroup right_motors({-2, 1, 3}, pros::MotorGearset::blue);
 
-pros::Distance dFront('A'); // front distance sensor on port A
-pros::Distance dLeft('B');  // left distance sensor on port B
-pros::Distance dRight('C'); // right distance sensor on port C 
-pros::Distance dBack('D');  // back distance sensor on port D
-// drivetrain settings
-lemlib::Drivetrain drivetrain(&leftMotors, // left motor group
-                              &rightMotors, // right motor group
-                              10, // 10 inch track width
-                              lemlib::Omniwheel::NEW_4, // using new 4" omnis
-                              360, // drivetrain rpm is 360
-                              2 // horizontal drift is 2. If we had traction wheels, it would have been 8
+
+pros::Motor k(9);
+pros::Motor a(-10);
+pros::Motor b(-8);
+pros::Motor c(-2);
+pros::Motor d(1);
+pros::Motor e(3);
+
+
+
+
+
+
+//IMU = inertial sensor, number = port
+pros::Imu imu(7);
+
+//our rotation sensors for odom
+pros::Rotation horizontal(6);
+pros::Rotation vertical(5);
+
+//intake motor
+pros::Motor firstStage(4);
+pros::Motor secondStage(-20);
+
+// Create the Drivetrain with LemLib.
+lemlib::Drivetrain drivetrain(&left_motors, // left motor group
+                              &right_motors, // right motor group
+                              9.25, // The track width (From the front of the bot, how far apart are the wheels?)
+                              lemlib::Omniwheel::NEW_325, // what wheel?
+                              480, // Drivetrain RPM
+                              4 // horizontal drift
 );
+lemlib::TrackingWheel horizontal_odom(&horizontal, lemlib::Omniwheel::NEW_275, -3.625);
+lemlib::TrackingWheel vertical_odom(&vertical, 2, -0.125);
 
-// lateral motion controller
-lemlib::ControllerSettings linearController(10, // proportional gain (kP)
-                                            0, // integral gain (kI)
-                                            3, // derivative gain (kD)
-                                            3, // anti windup
-                                            1, // small error range, in inches
-                                            100, // small error range timeout, in milliseconds
-                                            3, // large error range, in inches
-                                            500, // large error range timeout, in milliseconds
-                                            20 // maximum acceleration (slew)
-);
-
-// angular motion controller
-lemlib::ControllerSettings angularController(2, // proportional gain (kP)
-                                             0, // integral gain (kI)
-                                             10, // derivative gain (kD)
-                                             3, // anti windup
-                                             1, // small error range, in degrees
-                                             100, // small error range timeout, in milliseconds
-                                             3, // large error range, in degrees
-                                             500, // large error range timeout, in milliseconds
-                                             0 // maximum acceleration (slew)
-);
-
-// sensors for odometry
-lemlib::OdomSensors sensors(&vertical, // vertical tracking wheel
-                            nullptr, // vertical tracking wheel 2, set to nullptr as we don't have a second one
-                            &horizontal, // horizontal tracking wheel
-                            nullptr, // horizontal tracking wheel 2, set to nullptr as we don't have a second one
+// init odomsensors to feed the chassis class
+lemlib::OdomSensors sensors(&vertical_odom, // vertical tracking wheel 1
+                            nullptr, // vertical tracking wheel 2
+                            &horizontal_odom, // horizontal tracking wheel 1
+                            nullptr, // horizontal tracking wheel 2
                             &imu // inertial sensor
 );
 
+// lateral PID controller
+lemlib::ControllerSettings lateral_controller(5.07, // proportional gain (kP) 6.067
+                                              0, // integral gain (kI)
+                                              10.5, // derivative gain (kD) 22.175 
+                                              0, // anti windup
+                                              1, // small error range, in in 1
+                                              100, // small error range timeout, in milliseconds 100
+                                              3, // large error range, in in 3
+                                              400, // large error range timeout, in milliseconds 500
+                                              0 // maximum acceleration (slew)
+);
+
+// angular PID controllers
+lemlib::ControllerSettings angular_controller(1.47, // proportional gain (kP) \/
+                                              0.03, // integral gain (kI) 0.312
+                                              14, // derivative gain (kD) 17
+                                              30, // anti windup 4.5
+                                              1, // small error range, in deg 1
+                                              100, // small error range timeout, in milliseconds 150
+                                              3, // large error range, in deg 2.5
+                                              400, // large error range timeout, in milliseconds 550
+                                              0 // maximum acceleration (slew) 0
+);
+
+
 // input curve for throttle input during driver control
-lemlib::ExpoDriveCurve throttleCurve(3, // joystick deadband out of 127
-                                     10, // minimum output where drivetrain will move out of 127
-                                     1.019 // expo curve gain
+lemlib::ExpoDriveCurve throttle_curve(3, // joystick deadband out of 127
+                                     5, // minimum output where drivetrain will move out of 127
+                                     1.07 // expo curve gain
 );
 
 // input curve for steer input during driver control
-lemlib::ExpoDriveCurve steerCurve(3, // joystick deadband out of 127
-                                  10, // minimum output where drivetrain will move out of 127
-                                  1.019 // expo curve gain
+lemlib::ExpoDriveCurve steer_curve(3, // joystick deadband out of 127
+                                  5, // minimum output where drivetrain will move out of 127
+                                  1.12 // expo curve gain
 );
 
-// create the chassis
-lemlib::Chassis chassis(drivetrain, linearController, angularController, sensors, &throttleCurve, &steerCurve);
+// finally create the chassis
+lemlib::Chassis chassis(drivetrain, // drivetrain settings
+                        lateral_controller, // lateral PID settings
+                        angular_controller, // angular PID settings
+                        sensors, // odometry sensors
+						&throttle_curve, 
+                        &steer_curve
+);
+
+  pros::Distance front_sensor(1);
+  pros::Distance left_sensor(2);
+  pros::Distance right_sensor(3);
+  pros::Distance back_sensor(4);
+
+
+//where all yo autonomous stuff go. 
+ //  our starting poses for start of autos. If you don't change these, you're gonna die
+StartingPose leftStart {-54.0f, 15f, 90.0f};
+StartingPose rightStart {-54.0f, 17.0f, 180.0f};
+StartingPose awpStart {-54.0f, -17.0f, 180.0f};
+StartingPose skillsStart {-54.0f, -17.0f, 180.0f};
+StartingPose bumStart {0.0f, 0.0f, 0.0f};
 
 void left() {
     chassis.setPose(leftStart.x, leftStart.y, leftStart.theta);
@@ -174,7 +206,8 @@ void awp() { chassis.setPose(awpStart.x, awpStart.y, awpStart.theta); }
 void skills() { chassis.setPose(skillsStart.x, skillsStart.y, skillsStart.theta); }
 void bum() { chassis.setPose(bumStart.x, bumStart.y, bumStart.theta); }
 
-//where all yo autonomous stuff go. This not our real code file  so like thats all youre getting
+
+
 
 /**
  * Runs initialization code. This occurs as soon as the program is started.
@@ -190,7 +223,10 @@ void bum() { chassis.setPose(bumStart.x, bumStart.y, bumStart.theta); }
 void initialize() {
     pros::lcd::initialize(); // initialize brain screen
     chassis.calibrate(); // calibrate sensors
-
+    left_motors.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+  right_motors.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+  loader.set_value(false);
+  odomLift.set_value(false);
 
     controller.print(0, 0, "Auton Selected");
 
@@ -198,21 +234,18 @@ void initialize() {
         for (int i = 0; i < 150; i++) { //only run for 15s
         switch (autonSelected) {
         case 1:
-        left();
         pros::lcd::print(0, "Auton Selected %d | left", autonSelected);
         controller.print(1, 0, "Auton Selected %d", autonSelected);
         controller.print(2, 0, "left");
          currentPose = leftStart;
         break;
         case 2:
-        right();
         pros::lcd::print(0, "Auton Selected %d | right", autonSelected);
         controller.print(1, 0, "Auton Selected %d", autonSelected);
         controller.print(2, 0, "right");
          currentPose = rightStart;
         break;
         case 3:
-        awp();
         pros::lcd::print(0, "Auton Selected %d | awp", autonSelected);
         controller.print(1, 0, "Auton Selected %d", autonSelected);
         controller.print(2, 0, "awp");
@@ -220,14 +253,12 @@ void initialize() {
 
         break;
         case 4: 
-        skills();
         pros::lcd::print(0, "Auton Selected %d  | skills", autonSelected);
         controller.print(1, 0, "Auton Selected %d", autonSelected);
         controller.print(2, 0, "skills");
                  currentPose = skillsStart;
         break;
         default:
-        bum();
         pros::lcd::print(0, "Auton Selected %d  | bum", autonSelected);
         controller.print(1, 0, "Auton Selected %d", autonSelected);
         controller.print(2, 0, "bum");
@@ -295,6 +326,7 @@ ASSET(example_txt); // '.' replaced with "_" to make c++ happy
  *
  * This is an example autonomous routine which demonstrates a lot of the features LemLib has to offer
  */
+
 
 
 void autonomous() {
@@ -430,7 +462,7 @@ void autonomous() {
             }
 
 
-            // predict particle positions from odom
+            // predict particle positions with odom data
                lemlib::Pose localSpeed = lemlib::getLocalSpeed(false); // get local speed from lemlib , good thing i caught that mistake before  my beauty sleep (goon)
             for (Particle &p : particles) { //for each particle...
                 float dx = (localSpeed.x * dt) + dxNoise(generator); // use our deltas (which is our odom speed stuff thx lemlib) and then add some noise
@@ -445,7 +477,7 @@ void autonomous() {
                 p.theta -= 180.0f;
             }
 
-            // Update weights
+            // Update weights (how accurate is a particle given sensor readings?)
             auto readings = receiveReadings();
             auto confidences = receiveConfidences();
             float totalWeight = 0.0f;
@@ -512,20 +544,72 @@ void autonomous() {
 
     pros::delay(10);
 }
+bool L = false;
+bool odom = false;
 
 /**
  * Runs in driver control
  */
 void opcontrol() {
-    // controller
-    // loop to continuously update motors
-    while (true) {
-        // get joystick positions
-        int leftY = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
-        int rightX = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
-        // move the chassis with curvature drive
-        chassis.arcade(leftY, rightX);
-        // delay to save resources
-        pros::delay(10);
+while (true) {
+    left_motors.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+  right_motors.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    
+
+    
+//intake code + center goal piston
+//r1 only stage one
+//r2 scoring both intake
+//L2 outtake - slower
+//l1 top center w/ piston (piston stays down until any other intake button is pressed)
+
+//for the intake
+pros::Task intakeTask([&]() {
+   if(controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
+    centerGoal.set_value(false);
+    firstStage.move(110);
+  }else if(controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2)) {
+    centerGoal.set_value(false);
+    firstStage.move(110);
+    secondStage.move(110);
+  }else if(controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
+    centerGoal.set_value(true);
+    firstStage.move(110);
+  }else if(controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
+    centerGoal.set_value(false);
+    firstStage.move(-60);
+    secondStage.move(-60);
+  }else {
+    firstStage.move(0);
+    secondStage.move(0);
+  }
+  pros::delay(25);
+});
+
+// button for the match loader piston 
+pros::Task loading([&]() {
+  if(controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_A)) {
+    L = !L;
+    loader.set_value(L);
+    pros::delay(300);
+});
+
+
+//button for the odom lift piston activate/deactivate
+
+pros::Task odomLift({&]() {
+    if(controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_B)) {
+      odom = !odom;
+      odomLift.set_value(odom);
+      pros::delay(300);
     }
+});
+
+	int leftY = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
+      int rightX = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
+
+        chassis.arcade(leftY, rightX);
+
+        pros::delay(25); 
+}
 }
